@@ -104,7 +104,6 @@ impl Brush {
     fn stamp(&self, layer: &mut Layer, cx: i32, cy: i32) {
         let half = (self.size / 2) as i32;
         let pa = (self.flow.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
-        let [r, g, b] = self.color.map(|v| v as u32);
         for j in 0..self.size {
             let y = cy - half + j as i32;
             if y < 0 {

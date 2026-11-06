@@ -4,6 +4,8 @@
 // tile's previous contents are saved (once). after that, writes to the tile are a
 // plain store, with no hashing, no atomics and no per-pixel undo bookkeeping.
 
+use crate::util::mul255;
+
 pub const TILE_SHIFT: u32 = 8;
 pub const TILE_SIZE: u32 = 1 << TILE_SHIFT;
 const TILE_MASK: u32 = TILE_SIZE - 1;
@@ -110,6 +112,33 @@ impl Layer {
         }
     }
 
+    #[inline]
+    pub fn blend_pixel(&mut self, x: u32, y: u32, rgb: [u8; 3], a: u8) {
+        if a == 0 || x >= self.width || y >= self.height {
+            return;
+        }
+        let idx = ((y >> TILE_SHIFT) * self.cols + (x >> TILE_SHIFT)) as usize;
+        if self.slots[idx].saved_in != self.stroke {
+            self.save_tile(idx);
+        }
+        if let Some(t) = &mut self.slots[idx].tile {
+            let px = &mut t[(((y & TILE_MASK) << TILE_SHIFT) | (x & TILE_MASK)) as usize];
+            if a == 255 {
+                // Opaque: no need to read the destination.
+                *px = u32::from_le_bytes([rgb[0], rgb[1], rgb[2], 255]);
+                return;
+            }
+            let d = px.to_le_bytes();
+            let (a, inv) = (a as u32, 255 - a as u32);
+            *px = u32::from_le_bytes([
+                (mul255(rgb[0] as u32, a) + mul255(d[0] as u32, inv)) as u8,
+                (mul255(rgb[1] as u32, a) + mul255(d[1] as u32, inv)) as u8,
+                (mul255(rgb[2] as u32, a) + mul255(d[2] as u32, inv)) as u8,
+                (a + mul255(d[3] as u32, inv)) as u8,
+            ]);
+        }
+    }
+
     //------------ stays out of the hot loop
     #[cold]
     #[inline(never)]
@@ -133,5 +162,14 @@ impl Layer {
             Some(t) => t[(((y & TILE_MASK) << TILE_SHIFT) | (x & TILE_MASK)) as usize],
             None => 0,
         }
+    }
+
+    //getters
+    pub fn width(&self) -> u32 {
+        return self.width;
+    }
+
+    pub fn height(&self) -> u32 {
+        return self.height;
     }
 }

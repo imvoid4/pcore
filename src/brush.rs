@@ -119,20 +119,9 @@ impl Brush {
                 if x < 0 {
                     continue;
                 }
+
                 let a = mul255(cov, pa);
-                if a == 0 {
-                    continue;
-                }
-                // Source-over onto premultiplied RGBA stored as little-endian bytes.
-                let d = layer.get_pixel(x as u32, y as u32).to_le_bytes();
-                let inv = 255 - a;
-                let out = [
-                    (mul255(r, a) + mul255(d[0] as u32, inv)) as u8,
-                    (mul255(g, a) + mul255(d[1] as u32, inv)) as u8,
-                    (mul255(b, a) + mul255(d[2] as u32, inv)) as u8,
-                    (a + mul255(d[3] as u32, inv)) as u8,
-                ];
-                layer.set_pixel(x as u32, y as u32, u32::from_le_bytes(out));
+                layer.blend_pixel(x as u32, y as u32, self.color, a as u8);
             }
         }
     }

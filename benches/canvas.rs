@@ -3,6 +3,7 @@ use std::hint::black_box;
 
 use pcore::brush::Brush;
 use pcore::canvas::Layer;
+use pcore::shapes::draw_rect; // <- adjust to wherever draw_rect lives
 
 // ───────────────────────────── existing layer benches ─────────────────────────────
 
@@ -185,6 +186,112 @@ fn bench_undo(c: &mut Criterion) {
     g.finish();
 }
 
+// ─────────────────────── blend_pixel / rect / blending-brush benches ───────────────────────
+
+/// blend_pixel's two paths: a == 255 skips reading the destination, a < 255 reads and
+/// blends. Same shape as `canvas/repeated_pixel_writes`, so the numbers compare directly.
+fn bench_repeated_blend_writes(c: &mut Criterion) {
+    let mut g = c.benchmark_group("canvas/repeated_blend_writes");
+    g.throughput(Throughput::Elements(10_000));
+    for (name, a) in [("opaque", 255u8), ("translucent", 128u8)] {
+        g.bench_function(name, |b| {
+            let mut layer = Layer::new(4096, 4096);
+            layer.set_pixel(100, 100, 0xFF0000FF); // allocate the tile
+            b.iter(|| {
+                for i in 0..10_000u32 {
+                    layer.blend_pixel(black_box(i % 256), black_box(i / 256), [255, 0, 0], a);
+                }
+            });
+        });
+    }
+    g.finish();
+}
+
+/// draw_rect cost per pixel. A stroke is left open for the whole benchmark, so each
+/// tile's undo copy is paid once, before timing: this is the per-pixel work only.
+/// Throughput is pixels, so criterion prints Melem/s (1000 Melem/s = 1 ns/pixel).
+fn bench_rect(c: &mut Criterion) {
+    let mut g = c.benchmark_group("rect");
+    for (size, samples) in [(64u32, 100usize), (512, 50), (4096, 10)] {
+        g.sample_size(samples);
+        g.throughput(Throughput::Elements(size as u64 * size as u64));
+        for (name, alpha) in [("opaque", 255u8), ("blend50", 128u8)] {
+            g.bench_with_input(BenchmarkId::new(name, size), &size, |b, &size| {
+                let mut layer = Layer::new(4096, 4096);
+                layer.begin_stroke();
+                draw_rect(&mut layer, 0, 0, size, size, [200, 80, 40], 255); // allocate + save tiles
+                b.iter(|| {
+                    draw_rect(
+                        &mut layer,
+                        0,
+                        0,
+                        black_box(size),
+                        size,
+                        [30, 90, 200],
+                        alpha,
+                    )
+                });
+            });
+        }
+    }
+    g.finish();
+}
+
+/// Realistic tool use: begin, draw, end, drop the undo record. Tiles already exist, so
+/// this includes the undo save (a 256 KiB copy per tile touched) on top of the drawing.
+fn bench_rect_with_undo(c: &mut Criterion) {
+    let mut g = c.benchmark_group("rect_with_undo");
+    for size in [64u32, 512, 1024] {
+        g.throughput(Throughput::Elements(size as u64 * size as u64));
+        g.bench_with_input(BenchmarkId::new("blend50", size), &size, |b, &size| {
+            let mut layer = Layer::new(4096, 4096);
+            layer.begin_stroke();
+            draw_rect(&mut layer, 0, 0, size, size, [200, 80, 40], 255); // allocate tiles
+            let _ = layer.end_stroke();
+            b.iter(|| {
+                layer.begin_stroke();
+                draw_rect(&mut layer, 0, 0, size, size, [30, 90, 200], 128);
+                black_box(layer.end_stroke());
+            });
+        });
+    }
+    g.finish();
+}
+
+/// Which blend path the brush mostly hits (same 64px drag as brush/stroke_to_64px):
+///   hard_opaque       a == 255 almost everywhere  -> opaque fast path
+///   soft_opaque       opaque core, blended falloff
+///   hard_translucent  flow 0.5, every pixel blends
+///   soft_translucent  flow 0.5 and falloff: the "airbrush" worst case
+fn bench_brush_modes(c: &mut Criterion) {
+    let mut g = c.benchmark_group("brush_mode");
+    for radius in [16.0f32, 64.0] {
+        let dabs = (64.0 / (0.1 * 2.0 * radius).max(0.5)) as u64;
+        g.throughput(Throughput::Elements(dabs));
+        for (name, hardness, flow) in [
+            ("hard_opaque", 1.0f32, 1.0f32),
+            ("soft_opaque", 0.0, 1.0),
+            ("hard_translucent", 1.0, 0.5),
+            ("soft_translucent", 0.0, 0.5),
+        ] {
+            g.bench_with_input(BenchmarkId::new(name, radius as u32), &radius, |b, &r| {
+                let mut layer = Layer::new(4096, 4096);
+                let mut brush = Brush::new(r, hardness);
+                brush.flow = flow;
+                brush.color = [200, 80, 40];
+                brush.begin_stroke(&mut layer, 300.0, 300.0);
+                let mut flip = false;
+                b.iter(|| {
+                    flip = !flip;
+                    let x = if flip { 364.0 } else { 300.0 };
+                    brush.stroke_to(&mut layer, black_box(x), 300.0);
+                });
+            });
+        }
+    }
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_layer_creation,
@@ -194,6 +301,10 @@ criterion_group!(
     bench_brush_stamping,
     bench_brush_full_stroke,
     bench_undo,
+    bench_repeated_blend_writes,
+    bench_rect,
+    bench_rect_with_undo,
+    bench_brush_modes,
 );
 
 criterion_main!(benches);

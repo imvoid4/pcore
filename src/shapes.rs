@@ -73,7 +73,7 @@ fn draw_span(layer: &mut Layer, x: i32, y: i32, l: i32, c: [u8; 3], a: u8) {
     }
 }
 
-// draws an ellipse using spans.
+// draws an ellipse using spans.x
 pub fn draw_ellipse_inside(
     cx: i32,
     cy: i32,

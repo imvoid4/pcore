@@ -2,8 +2,8 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use std::hint::black_box;
 
 use pcore::brush::Brush;
-use pcore::canvas::Layer;
-use pcore::shapes::draw_rect; // <- adjust to wherever draw_rect lives
+use pcore::canvas::{Layer, UndoAction};
+use pcore::shapes::draw_rect;
 
 // ───────────────────────────── existing layer benches ─────────────────────────────
 
@@ -72,6 +72,16 @@ fn bench_canvas_paint(c: &mut Criterion) {
 fn touch_tiles(layer: &mut Layer, n: usize, value: u32) {
     for i in 0..n as u32 {
         layer.set_pixel((i % 16) * 256 + 5, (i / 16) * 256 + 5, value);
+    }
+}
+
+/// Like `touch_tiles`, but also writes the far corner (255, 255) of each tile, so
+/// that shrinking to a non-tile-aligned size actually has pixels to clip.
+fn paint_tiles(layer: &mut Layer, n: usize, value: u32) {
+    for i in 0..n as u32 {
+        let (ox, oy) = ((i % 16) * 256, (i / 16) * 256);
+        layer.set_pixel(ox + 5, oy + 5, value);
+        layer.set_pixel(ox + 255, oy + 255, value);
     }
 }
 
@@ -160,7 +170,7 @@ fn bench_undo(c: &mut Criterion) {
             let _ = layer.end_stroke();
             layer.begin_stroke();
             touch_tiles(&mut layer, n, 2); // ...then a stroke that overwrites them
-            let mut record = Some(layer.end_stroke());
+            let mut record = Some(UndoAction::Stroke(layer.end_stroke()));
             b.iter(|| {
                 record = Some(layer.apply_undo(record.take().unwrap()));
             });
@@ -328,6 +338,61 @@ fn bench_brush_modes(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_resize(c: &mut Criterion) {
+    let mut g = c.benchmark_group("resize");
+    g.sample_size(20);
+
+    // Nothing to move: pure grid rebuild cost.
+    g.bench_function("noop_same_size", |b| {
+        let mut layer = Layer::new(4096, 4096);
+        b.iter(|| black_box(layer.resize(4096, 4096)));
+    });
+
+    g.bench_function("empty_grow_8192_roundtrip", |b| {
+        let mut layer = Layer::new(4096, 4096);
+        b.iter(|| {
+            let undo = layer.resize(8192, 8192);
+            black_box(layer.apply_undo(undo));
+        });
+    });
+
+    // Fully painted 4096x4096 (256 tiles, 64 MiB).
+    let cases: [(&str, u32, u32); 4] = [
+        // drops whole tiles, no edge clipping needed
+        ("shrink_aligned_2048", 2048, 2048),
+        // drops tiles AND clips the new edge tiles (copies them for the patch)
+        ("shrink_unaligned_2000", 2000, 2000),
+        // width only: clips the last column, keeps every row
+        ("shrink_width_2000x4096", 2000, 4096),
+        // existing tiles just move; the patch should be empty
+        ("grow_8192", 8192, 8192),
+    ];
+
+    for (name, w, h) in cases {
+        g.bench_function(format!("painted_{name}_roundtrip"), |b| {
+            let mut layer = Layer::new(4096, 4096);
+            paint_tiles(&mut layer, 256, 1);
+            let _ = layer.end_stroke();
+            b.iter(|| {
+                let undo = layer.resize(black_box(w), black_box(h));
+                black_box(layer.apply_undo(undo));
+            });
+        });
+
+        g.bench_function(format!("painted_{name}_undo_only"), |b| {
+            let mut layer = Layer::new(4096, 4096);
+            paint_tiles(&mut layer, 256, 1);
+            let _ = layer.end_stroke();
+            let mut record = Some(layer.resize(w, h));
+            b.iter(|| {
+                record = Some(layer.apply_undo(record.take().unwrap()));
+            });
+        });
+    }
+
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_layer_creation,
@@ -341,6 +406,7 @@ criterion_group!(
     bench_rect,
     bench_rect_with_undo,
     bench_brush_modes,
+    bench_resize,
 );
 
 criterion_main!(benches);

@@ -28,6 +28,7 @@ fn copy_tile(t: &Tile) -> Box<Tile> {
     t.to_vec().into_boxed_slice().try_into().unwrap()
 }
 
+#[derive(Clone)]
 struct Slot {
     // ID of the last stroke that saved this tile's previous contents.
     saved_in: u32,
@@ -47,6 +48,7 @@ impl StrokeUndo {
     }
 }
 
+#[derive(Clone)]
 pub struct Layer {
     slots: Vec<Slot>, // dense grid, row-major: idx = tile_y * cols + tile_x
     cols: u32,
@@ -57,7 +59,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// (width, height), the conventional order.
+    // (width, height), the conventional order.
     pub fn new(width: u32, height: u32) -> Self {
         let cols = width.div_ceil(TILE_SIZE);
         let rows = height.div_ceil(TILE_SIZE);

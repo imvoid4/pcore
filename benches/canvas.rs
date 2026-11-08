@@ -219,7 +219,18 @@ fn bench_rect(c: &mut Criterion) {
             g.bench_with_input(BenchmarkId::new(name, size), &size, |b, &size| {
                 let mut layer = Layer::new(4096, 4096);
                 layer.begin_stroke();
-                draw_rect(&mut layer, 0, 0, size, size, [200, 80, 40], 255); // allocate + save tiles
+                draw_rect(
+                    &mut layer,
+                    0,
+                    0,
+                    size,
+                    size,
+                    [200, 80, 40],
+                    255,
+                    [255, 0, 0],
+                    255,
+                    10,
+                ); // allocate + save tiles
                 b.iter(|| {
                     draw_rect(
                         &mut layer,
@@ -229,6 +240,9 @@ fn bench_rect(c: &mut Criterion) {
                         size,
                         [30, 90, 200],
                         alpha,
+                        [255, 0, 0],
+                        alpha,
+                        10,
                     )
                 });
             });
@@ -246,11 +260,33 @@ fn bench_rect_with_undo(c: &mut Criterion) {
         g.bench_with_input(BenchmarkId::new("blend50", size), &size, |b, &size| {
             let mut layer = Layer::new(4096, 4096);
             layer.begin_stroke();
-            draw_rect(&mut layer, 0, 0, size, size, [200, 80, 40], 255); // allocate tiles
+            draw_rect(
+                &mut layer,
+                0,
+                0,
+                size,
+                size,
+                [200, 80, 40],
+                255,
+                [10, 10, 10],
+                255,
+                10,
+            ); // allocate tiles
             let _ = layer.end_stroke();
             b.iter(|| {
                 layer.begin_stroke();
-                draw_rect(&mut layer, 0, 0, size, size, [30, 90, 200], 128);
+                draw_rect(
+                    &mut layer,
+                    0,
+                    0,
+                    size,
+                    size,
+                    [30, 90, 200],
+                    128,
+                    [10, 10, 10],
+                    255,
+                    10,
+                );
                 black_box(layer.end_stroke());
             });
         });

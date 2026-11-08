@@ -41,6 +41,33 @@ pub struct StrokeUndo {
     tiles: Vec<(u32, Option<Box<Tile>>)>,
 }
 
+pub struct CanvasUndo {
+    width: u32,
+    height: u32,
+    patch: Vec<(u32, u32, Option<Box<Tile>>)>,
+}
+
+// zero everything outside keep_w x keep_h; returns whether anything changed
+fn clip_tile(t: &mut Tile, keep_w: u32, keep_h: u32) -> bool {
+    let mut changed = false;
+    for row in 0..TILE_SIZE {
+        let start = (row << TILE_SHIFT) as usize;
+        let line = &mut t[start..start + TILE_SIZE as usize];
+        let from = if row >= keep_h { 0 } else { keep_w as usize };
+        let tail = &mut line[from..];
+        if tail.iter().any(|&p| p != 0) {
+            tail.fill(0);
+            changed = true;
+        }
+    }
+    changed
+}
+
+pub enum UndoAction {
+    Stroke(StrokeUndo),
+    Canvas(CanvasUndo),
+}
+
 impl StrokeUndo {
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
@@ -87,15 +114,22 @@ impl Layer {
         }
     }
 
-    // undo (or redo) a stroke. Call between strokes. returns the inverse record.
-    pub fn apply_undo(&mut self, u: StrokeUndo) -> StrokeUndo {
-        self.stroke += 1; // any later write must save its tile again
-        let mut inverse = Vec::with_capacity(u.tiles.len());
-        for (idx, mut t) in u.tiles {
-            std::mem::swap(&mut self.slots[idx as usize].tile, &mut t);
-            inverse.push((idx, t));
+    pub fn apply_undo(&mut self, action: UndoAction) -> UndoAction {
+        self.stroke += 1; // invalidate current stroke saves
+
+        match action {
+            UndoAction::Stroke(s) => {
+                let mut inverse = Vec::with_capacity(s.tiles.len());
+                for (idx, mut t) in s.tiles {
+                    std::mem::swap(&mut self.slots[idx as usize].tile, &mut t);
+                    inverse.push((idx, t));
+                }
+                UndoAction::Stroke(StrokeUndo { tiles: inverse })
+            }
+            UndoAction::Canvas(c) => {
+                UndoAction::Canvas(self.reshape(c.width, c.height, c.patch, false))
+            }
         }
-        StrokeUndo { tiles: inverse }
     }
 
     #[inline]
@@ -164,12 +198,91 @@ impl Layer {
         }
     }
 
+    fn reshape(
+        &mut self,
+        new_w: u32,
+        new_h: u32,
+        patch: Vec<(u32, u32, Option<Box<Tile>>)>,
+        clip_edges: bool,
+    ) -> CanvasUndo {
+        let new_cols = new_w.div_ceil(TILE_SIZE);
+        let new_rows = new_h.div_ceil(TILE_SIZE);
+        let old_cols = self.cols;
+
+        let mut new_slots: Vec<Slot> = (0..new_cols * new_rows)
+            .map(|_| Slot {
+                saved_in: 0,
+                tile: None,
+            })
+            .collect();
+        let mut inverse = Vec::new();
+
+        // 1. move tiles into the new grid (no copies); dropped ones go to the inverse
+        for (i, slot) in std::mem::take(&mut self.slots).into_iter().enumerate() {
+            let Some(tile) = slot.tile else { continue };
+            let (tx, ty) = (i as u32 % old_cols, i as u32 / old_cols);
+            if tx < new_cols && ty < new_rows {
+                new_slots[(ty * new_cols + tx) as usize].tile = Some(tile);
+            } else {
+                inverse.push((tx, ty, Some(tile)));
+            }
+        }
+
+        // 2. on shrink, clip edge tiles; keep a copy only if clipping changed them
+        if clip_edges && (new_w < self.width || new_h < self.height) {
+            for ty in 0..new_rows {
+                for tx in 0..new_cols {
+                    let keep_w = (new_w - tx * TILE_SIZE).min(TILE_SIZE);
+                    let keep_h = (new_h - ty * TILE_SIZE).min(TILE_SIZE);
+                    if keep_w == TILE_SIZE && keep_h == TILE_SIZE {
+                        continue;
+                    }
+                    if let Some(t) = &mut new_slots[(ty * new_cols + tx) as usize].tile {
+                        let before = copy_tile(t);
+                        if clip_tile(t, keep_w, keep_h) {
+                            inverse.push((tx, ty, Some(before)));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. apply the restore patch, recording whatever it displaces
+        for (tx, ty, tile) in patch {
+            if tx < new_cols && ty < new_rows {
+                let slot = &mut new_slots[(ty * new_cols + tx) as usize];
+                let displaced = std::mem::replace(&mut slot.tile, tile);
+                inverse.push((tx, ty, displaced));
+            }
+        }
+
+        let undo = CanvasUndo {
+            width: self.width,
+            height: self.height,
+            patch: inverse,
+        };
+
+        self.slots = new_slots;
+        self.cols = new_cols;
+        self.width = new_w;
+        self.height = new_h;
+        self.undo.clear(); // grid geometry changed
+        undo
+    }
+
+    pub fn resize(&mut self, new_width: u32, new_height: u32) -> UndoAction {
+        if new_width == self.width && new_height == self.height {
+            return UndoAction::Stroke(StrokeUndo { tiles: Vec::new() });
+        }
+        UndoAction::Canvas(self.reshape(new_width, new_height, Vec::new(), true))
+    }
+
     //getters
     pub fn width(&self) -> u32 {
-        return self.width;
+        self.width
     }
 
     pub fn height(&self) -> u32 {
-        return self.height;
+        self.height
     }
 }

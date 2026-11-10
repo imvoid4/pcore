@@ -76,16 +76,8 @@ fn draw_span(layer: &mut Layer, x: i32, y: i32, l: i32, c: [u8; 3], a: u8) {
 }
 
 // draws an ellipse using spans.
-fn draw_ellipse_inside(
-    cx: i32,
-    cy: i32,
-    rx: i32,
-    ry: i32,
-    layer: &mut Layer,
-    color: Color,
-    alpha: u8,
-) {
-    if rx <= 0 || ry <= 0 || alpha == 0 {
+fn draw_ellipse_inside(cx: i32, cy: i32, rx: i32, ry: i32, layer: &mut Layer, c: Color, a: u8) {
+    if rx <= 0 || ry <= 0 || a == 0 {
         return;
     }
 
@@ -102,8 +94,8 @@ fn draw_ellipse_inside(
     let mut p1 = (4 * ry2 - 4 * rx2 * ry + rx2) as f64;
 
     while dx < dy {
-        draw_span(layer, cx - x, cy - y, 2 * x + 1, color, alpha);
-        draw_span(layer, cx - x, cy + y, 2 * x + 1, color, alpha);
+        draw_span(layer, cx - x, cy - y, 2 * x + 1, c, a);
+        draw_span(layer, cx - x, cy + y, 2 * x + 1, c, a);
 
         x += 1;
         dx = 2 * ry2 * x;
@@ -122,8 +114,8 @@ fn draw_ellipse_inside(
         - (rx2 * ry2) as f64;
 
     while y >= 0 {
-        draw_span(layer, cx - x, cy - y, 2 * x + 1, color, alpha);
-        draw_span(layer, cx - x, cy + y, 2 * x + 1, color, alpha);
+        draw_span(layer, cx - x, cy - y, 2 * x + 1, c, a);
+        draw_span(layer, cx - x, cy + y, 2 * x + 1, c, a);
 
         y -= 1;
         dy = 2 * rx2 * y;
@@ -145,11 +137,11 @@ fn draw_ellipse_outline(
     cy: i32,
     rx: i32,
     ry: i32,
-    color: Color,
-    alpha: u8,
+    c: Color,
+    a: u8,
     thickness: u32,
 ) {
-    if rx <= 0 || ry <= 0 || thickness == 0 || alpha == 0 {
+    if rx <= 0 || ry <= 0 || thickness == 0 || a == 0 {
         return;
     }
 
@@ -227,12 +219,12 @@ fn draw_ellipse_outline(
 
         let right_len = if in_x < 0 { 0 } else { out_x - in_x };
 
-        draw_span(layer, cx - out_x, cy - y_offset, left_len, color, alpha);
-        draw_span(layer, cx + in_x + 1, cy - y_offset, right_len, color, alpha);
+        draw_span(layer, cx - out_x, cy - y_offset, left_len, c, a);
+        draw_span(layer, cx + in_x + 1, cy - y_offset, right_len, c, a);
 
         if y_offset > 0 {
-            draw_span(layer, cx - out_x, cy + y_offset, left_len, color, alpha);
-            draw_span(layer, cx + in_x + 1, cy + y_offset, right_len, color, alpha);
+            draw_span(layer, cx - out_x, cy + y_offset, left_len, c, a);
+            draw_span(layer, cx + in_x + 1, cy + y_offset, right_len, c, a);
         }
     }
 }

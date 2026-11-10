@@ -7,13 +7,37 @@ pcore is a fast CPU-based core for a raster paint app. It provides the necessary
 
 The full benchmark results can be found at target/criterion/report/index.html.
 
-Filling the whole canvas: 39.547 ms
+| Operation | Speed |
+|---|---:|
+| Filling the whole canvas | 39.547 ms |
+| 1000px brush stroke with a radius of 8 | 973.86 us |
+| Single pixel write (no blend) | 1.56 ns |
+| Single pixel write with blend | 4.06 ns |
+| Blended 4096x4096 ellipse at 128 alpha | 669.76 us |
 
-1000px brush stroke with a radius of 8: 973.86 us
+## Building
 
-Single pixel write (no blend): 1.56 ns
+Requirements:
 
-Single pixel write with blend: 4.06 ns
+- ```git```
+- Rust toolchain
+- ```cargo```
 
-Blended 4096x4096 ellipse at 128 alpha: 669.76 us
+First, clone the repo:
 
+```
+git clone https://github.com/imvoid4/pcore.git
+cd pcore
+```
+
+Build
+
+```
+cargo build --release
+```
+
+(Optional) Benchmark
+
+```
+cargo bench
+```

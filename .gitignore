@@ -1,1 +1,5 @@
-/target
+/target/CACHEDIR.TAG
+/target/debug
+/target/flycheck0
+/target/release
+/target/tmp

@@ -11,3 +11,11 @@ criterion = "0.7"
 [[bench]]
 name = "canvas"
 harness = false
+
+[[bench]]
+name = "brush"
+harness = false
+
+[[bench]]
+name = "shapes"
+harness = false

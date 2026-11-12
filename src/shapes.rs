@@ -2,6 +2,12 @@ use crate::canvas::Layer;
 
 type Color = [u8; 3];
 
+struct Mask {
+    pixels: Vec<bool>,
+    width: u32,
+    height: u32,
+}
+
 pub fn draw_rect(
     layer: &mut Layer,
     x: u32,
@@ -62,13 +68,13 @@ pub fn draw_rect(
 
 // fast path for straight, horizontal lines.
 // used for scanline rasterization functions like the ellipse function.
-fn draw_span(layer: &mut Layer, x: i32, y: i32, l: i32, c: [u8; 3], a: u8) {
-    if y < 0 || y >= layer.height() as i32 || l <= 0 {
+fn draw_span(layer: &mut Layer, x: u32, y: u32, l: u32, c: [u8; 3], a: u8) {
+    if y < 0 || y >= layer.height() || l <= 0 {
         return;
     }
 
     let x0 = x.max(0);
-    let x1 = (x + l).min(layer.width() as i32);
+    let x1 = (x + l).min(layer.width());
 
     for xx in x0..x1 {
         layer.blend_pixel(xx as u32, y as u32, c, a);
@@ -76,7 +82,7 @@ fn draw_span(layer: &mut Layer, x: i32, y: i32, l: i32, c: [u8; 3], a: u8) {
 }
 
 // draws an ellipse using spans.
-fn draw_ellipse_inside(cx: i32, cy: i32, rx: i32, ry: i32, layer: &mut Layer, c: Color, a: u8) {
+fn draw_ellipse_inside(cx: u32, cy: u32, rx: u32, ry: u32, layer: &mut Layer, c: Color, a: u8) {
     if rx <= 0 || ry <= 0 || a == 0 {
         return;
     }
@@ -131,41 +137,53 @@ fn draw_ellipse_inside(cx: i32, cy: i32, rx: i32, ry: i32, layer: &mut Layer, c:
 }
 
 // draws the outside of an ellipse using scanlines.
+
 fn draw_ellipse_outline(
     layer: &mut Layer,
-    cx: i32,
-    cy: i32,
-    rx: i32,
-    ry: i32,
+    cx: u32,
+    cy: u32,
+    rx: u32,
+    ry: u32,
     c: Color,
     a: u8,
     thickness: u32,
 ) {
-    if rx <= 0 || ry <= 0 || thickness == 0 || a == 0 {
+    if rx == 0 || ry == 0 || thickness == 0 || a == 0 {
         return;
     }
 
-    let out_rx = rx + thickness as i32;
-    let out_ry = ry + thickness as i32;
+    let Some(out_rx) = rx.checked_add(thickness) else {
+        return;
+    };
+    let Some(out_ry) = ry.checked_add(thickness) else {
+        return;
+    };
 
-    let mut outer_spans = vec![0i32; (out_ry + 1) as usize];
-    let mut inner_spans = vec![-1i32; (out_ry + 1) as usize];
+    let Ok(span_count) = usize::try_from(out_ry)
+        .ok()
+        .and_then(|v| v.checked_add(1))
+        .ok_or(())
+    else {
+        return;
+    };
 
-    fn calculate_spans(rx: i32, ry: i32, spans: &mut [i32]) {
-        if rx <= 0 || ry <= 0 {
-            return;
-        }
+    let mut outer_spans = vec![0i64; span_count];
+    let mut inner_spans = vec![-1i64; span_count];
 
-        let a2 = rx * rx;
-        let b2 = ry * ry;
+    fn calculate_spans(rx: u32, ry: u32, spans: &mut [i64]) {
+        let a = rx as i64;
+        let b = ry as i64;
 
-        let mut x = 0;
-        let mut y = ry;
+        let a2 = a * a;
+        let b2 = b * b;
 
-        let mut px = 0;
+        let mut x = 0i64;
+        let mut y = b;
+
+        let mut px = 0i64;
         let mut py = 2 * a2 * y;
 
-        let mut p = (b2 as f64 - (a2 * ry) as f64 + 0.25 * a2 as f64).round() as i32;
+        let mut p = (b2 as f64 - (a2 * b) as f64 + 0.25 * a2 as f64).round();
 
         while px < py {
             spans[y as usize] = spans[y as usize].max(x);
@@ -173,12 +191,12 @@ fn draw_ellipse_outline(
             x += 1;
             px += 2 * b2;
 
-            if p < 0 {
-                p += b2 + px;
+            if p < 0.0 {
+                p += (b2 + px) as f64;
             } else {
                 y -= 1;
                 py -= 2 * a2;
-                p += b2 + px - py;
+                p += (b2 + px - py) as f64;
             }
         }
 
@@ -186,7 +204,7 @@ fn draw_ellipse_outline(
 
         p = (b2 as f64 * (x as f64 + 0.5).powi(2) + a2 as f64 * (y as f64 - 1.0).powi(2)
             - (a2 * b2) as f64)
-            .round() as i32;
+            .round();
 
         while y >= 0 {
             spans[y as usize] = spans[y as usize].max(x);
@@ -194,12 +212,12 @@ fn draw_ellipse_outline(
             y -= 1;
             py -= 2 * a2;
 
-            if p > 0 {
-                p += a2 - py;
+            if p > 0.0 {
+                p += (a2 - py) as f64;
             } else {
                 x += 1;
                 px += 2 * b2;
-                p += a2 - py + px;
+                p += (a2 - py + px) as f64;
             }
         }
     }
@@ -207,9 +225,13 @@ fn draw_ellipse_outline(
     calculate_spans(out_rx, out_ry, &mut outer_spans);
     calculate_spans(rx, ry, &mut inner_spans);
 
-    for y_offset in 0..=out_ry {
-        let out_x = outer_spans[y_offset as usize];
-        let in_x = inner_spans[y_offset as usize];
+    let cx = cx as i64;
+    let cy = cy as i64;
+
+    for y in 0..=out_ry as usize {
+        let out_x = outer_spans[y];
+        let in_x = inner_spans[y];
+        let y = y as i64;
 
         let left_len = if in_x < 0 {
             2 * out_x + 1
@@ -219,22 +241,50 @@ fn draw_ellipse_outline(
 
         let right_len = if in_x < 0 { 0 } else { out_x - in_x };
 
-        draw_span(layer, cx - out_x, cy - y_offset, left_len, c, a);
-        draw_span(layer, cx + in_x + 1, cy - y_offset, right_len, c, a);
+        draw_span(
+            layer,
+            (cx - out_x) as u32,
+            (cy - y) as u32,
+            left_len as u32,
+            c,
+            a,
+        );
+        draw_span(
+            layer,
+            (cx + in_x + 1) as u32,
+            (cy - y) as u32,
+            right_len as u32,
+            c,
+            a,
+        );
 
-        if y_offset > 0 {
-            draw_span(layer, cx - out_x, cy + y_offset, left_len, c, a);
-            draw_span(layer, cx + in_x + 1, cy + y_offset, right_len, c, a);
+        if y > 0 {
+            draw_span(
+                layer,
+                (cx - out_x) as u32,
+                (cy + y) as u32,
+                left_len as u32,
+                c,
+                a,
+            );
+            draw_span(
+                layer,
+                (cx + in_x + 1) as u32,
+                (cy + y) as u32,
+                right_len as u32,
+                c,
+                a,
+            );
         }
     }
 }
 
 pub fn draw_ellipse(
     layer: &mut Layer,
-    cx: i32,
-    cy: i32,
-    rx: i32,
-    ry: i32,
+    cx: u32,
+    cy: u32,
+    rx: u32,
+    ry: u32,
     c: Color,
     a: u8,
     outline_c: Color,
@@ -247,4 +297,21 @@ pub fn draw_ellipse(
 
     draw_ellipse_inside(cx, cy, rx, ry, layer, c, a); // cancels itself if alpha is zero
     draw_ellipse_outline(layer, cx, cy, rx, ry, outline_c, outline_a, thickness); // cancels itself if outline alpha is zero or thickness is zero
+}
+
+fn draw_line(layer: &mut Layer, x1: u32, y1: u32, x2: u32, y2: u32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rect_fills_correct_area() {
+        let mut layer = Layer::new(10, 10);
+
+        draw_rect(&mut layer, 2, 2, 4, 4, [255, 0, 0], 255, [0, 0, 0], 0, 0);
+
+        assert_eq!(layer.get_pixel(3, 3), 0xFF0000FF);
+        assert_eq!(layer.get_pixel(0, 0), 0x00000000);
+    }
 }
